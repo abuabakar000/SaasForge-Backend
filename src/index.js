@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
-const morgan = require('morgan');
+
 const rateLimit = require('express-rate-limit');
 const connectDB = require('./config/db');
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
@@ -24,6 +24,7 @@ app.use(helmet({
 }));
 
 if (process.env.NODE_ENV === 'development') {
+    const morgan = require('morgan');
     app.use(morgan('dev')); // Logging
 }
 
