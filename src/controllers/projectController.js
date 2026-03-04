@@ -1,6 +1,7 @@
 const Project = require('../models/Project');
 const fs = require('fs');
 const path = require('path');
+const cloudinary = require('../config/cloudinary');
 
 // @desc    Get all active user's projects
 // @route   GET /api/projects
@@ -36,7 +37,12 @@ const createProject = async (req, res) => {
         const { name, description, githubLink, liveLink } = req.body;
 
         if (!name || !description) {
-            if (req.files) req.files.forEach(file => fs.unlinkSync(file.path));
+            // Local file deletion is not needed since it's Cloudinary, but we should destroy the uploaded file
+            if (req.files) {
+                for (const file of req.files) {
+                    await cloudinary.uploader.destroy(file.filename);
+                }
+            }
             return res.status(400).json({ message: 'Please provide name and description' });
         }
 
@@ -47,11 +53,11 @@ const createProject = async (req, res) => {
                 // Keep only the first file, delete the rest for free tier
                 const keptFile = req.files[0];
                 for (let i = 1; i < req.files.length; i++) {
-                    fs.unlinkSync(req.files[i].path);
+                    await cloudinary.uploader.destroy(req.files[i].filename);
                 }
-                images.push(`/uploads/${keptFile.filename}`);
+                images.push(keptFile.path); // Cloudinary URL is in path
             } else {
-                images = req.files.map(file => `/uploads/${file.filename}`);
+                images = req.files.map(file => file.path); // Cloudinary URL
             }
         }
 
@@ -67,7 +73,11 @@ const createProject = async (req, res) => {
 
         res.status(201).json(project);
     } catch (error) {
-        if (req.files) req.files.forEach(file => fs.unlinkSync(file.path));
+        if (req.files) {
+            for (const file of req.files) {
+                await cloudinary.uploader.destroy(file.filename);
+            }
+        }
         res.status(500).json({ message: error.message });
     }
 };
@@ -96,20 +106,26 @@ const updateProject = async (req, res) => {
         // 1. Handle deletion of old images
         if (removeImages) {
             const imagesToRemove = Array.isArray(removeImages) ? removeImages : [removeImages];
-            imagesToRemove.forEach(img => {
-                const filePath = path.join(__dirname, '../../', img);
-                if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            });
+            for (const imgUrl of imagesToRemove) {
+                // Extract public ID from Cloudinary URL
+                // e.g. https://res.cloudinary.com/user/image/upload/v1234/folder/id.jpg
+                const urlParts = imgUrl.split('/');
+                const filenameWithExt = urlParts[urlParts.length - 1];
+                const publicId = `saasforge_projects/${filenameWithExt.split('.')[0]}`;
+                await cloudinary.uploader.destroy(publicId);
+            }
             newImages = newImages.filter(img => !imagesToRemove.includes(img));
         }
 
         // 2. Add newly uploaded images
         if (req.files && req.files.length > 0) {
-            const uploadedUrls = req.files.map(file => `/uploads/${file.filename}`);
+            const uploadedUrls = req.files.map(file => file.path); // Cloudinary URL
 
             // Re-enforce free tier image limit (max 1 total image on the record)
             if (!isPro && (newImages.length + uploadedUrls.length) > 1) {
-                req.files.forEach(file => fs.unlinkSync(file.path)); // rollback uploads
+                for (const file of req.files) {
+                    await cloudinary.uploader.destroy(file.filename);
+                }
                 return res.status(403).json({ message: 'Free plan limits you to 1 total image per project.' });
             }
 
@@ -130,7 +146,11 @@ const updateProject = async (req, res) => {
         res.json(updatedProject);
 
     } catch (error) {
-        if (req.files) req.files.forEach(file => fs.unlinkSync(file.path));
+        if (req.files) {
+            for (const file of req.files) {
+                await cloudinary.uploader.destroy(file.filename);
+            }
+        }
         res.status(500).json({ message: error.message });
     }
 };
@@ -151,13 +171,13 @@ const deleteProject = async (req, res) => {
             return res.status(401).json({ message: 'Not authorized to delete' });
         }
 
-        // Clean up stored image files
-        project.images.forEach(img => {
-            const filePath = path.join(__dirname, '../../', img);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
-        });
+        // Clean up stored image files from Cloudinary
+        for (const imgUrl of project.images) {
+            const urlParts = imgUrl.split('/');
+            const filenameWithExt = urlParts[urlParts.length - 1];
+            const publicId = `saasforge_projects/${filenameWithExt.split('.')[0]}`;
+            await cloudinary.uploader.destroy(publicId);
+        }
 
         await project.deleteOne();
         res.json({ id: req.params.id, message: 'Project deleted' });

@@ -16,6 +16,7 @@
     "@react-email/components": "^1.0.8",
     "@react-email/render": "^2.0.4",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -26,6 +27,7 @@
     "mongodb": "^7.1.0",
     "mongoose": "^9.2.4",
     "multer": "^2.1.0",
+    "multer-storage-cloudinary": "^4.0.0",
     "nodemailer": "^8.0.1",
     "resend": "^6.9.3",
     "stripe": "^20.4.0"
