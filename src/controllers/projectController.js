@@ -1,4 +1,5 @@
 const Project = require('../models/Project');
+const Notification = require('../models/Notification');
 const fs = require('fs');
 const path = require('path');
 const cloudinary = require('../config/cloudinary');
@@ -25,12 +26,17 @@ const createProject = async (req, res) => {
 
         if (!isPro) {
             const projectCount = await Project.countDocuments({ user: req.user.id });
+            console.log(`[PLAN ENFORCEMENT] User: ${req.user.username}, Role: ${req.user.role}, Current Projects: ${projectCount}`);
+
             if (projectCount >= 3) {
-                // If they uploaded files but hit the limit, delete the new files
+                console.warn(`[DENIED] User ${req.user.username} reached project limit (3/3)`);
+                // If they uploaded files but hit the limit, delete the new files from Cloudinary
                 if (req.files) {
-                    req.files.forEach(file => fs.unlinkSync(file.path));
+                    for (const file of req.files) {
+                        await cloudinary.uploader.destroy(file.filename);
+                    }
                 }
-                return res.status(403).json({ message: 'Free plan is limited to 3 projects. Please upgrade to Pro.' });
+                return res.status(403).json({ message: 'Free plan is limited to 3 project nodes. Upgrade to Pro for unlimited access.' });
             }
         }
 
@@ -70,6 +76,26 @@ const createProject = async (req, res) => {
             images,
             isFeatured: isPro && req.body.isFeatured === 'true', // Only Pro can set featured
         });
+
+        // SUCCESS NOTIFICATION
+        await Notification.create({
+            user: req.user.id,
+            title: 'Project Node Initialized 🚀',
+            message: `Your project "${name}" has been successfully broadcasted to the system nodes.`,
+            type: 'success',
+            link: '/'
+        });
+
+        // PREMIUM UPSELL NOTIFICATION
+        if (!isPro) {
+            await Notification.create({
+                user: req.user.id,
+                title: 'Unlock Unlimited Power ⚡',
+                message: 'You are currently on the Free Protocol. Upgrade to Pro for unlimited project nodes and priority neural bandwidth.',
+                type: 'promo',
+                link: '/pricing'
+            });
+        }
 
         res.status(201).json(project);
     } catch (error) {
@@ -122,11 +148,13 @@ const updateProject = async (req, res) => {
             const uploadedUrls = req.files.map(file => file.path); // Cloudinary URL
 
             // Re-enforce free tier image limit (max 1 total image on the record)
-            if (!isPro && (newImages.length + uploadedUrls.length) > 1) {
+            const totalImages = newImages.length + uploadedUrls.length;
+            if (!isPro && totalImages > 1) {
+                console.warn(`[DENIED] User ${req.user.username} attempted to upload ${totalImages} images (Limit: 1)`);
                 for (const file of req.files) {
                     await cloudinary.uploader.destroy(file.filename);
                 }
-                return res.status(403).json({ message: 'Free plan limits you to 1 total image per project.' });
+                return res.status(403).json({ message: 'Free plan limits you to 1 total image per project. Purge old images or upgrade to Pro.' });
             }
 
             newImages = [...newImages, ...uploadedUrls];

@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const { generateAccessToken, generateRefreshToken } = require('../utils/tokenUtils');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('../utils/sendResendEmail');
@@ -29,41 +30,43 @@ const registerUser = async (req, res) => {
             verificationToken
         });
 
-        // Send verification email via Resend
-        const verifyUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+        // Initialize welcome notification
+        await Notification.create({
+            user: user._id,
+            title: 'Welcome to SaaSForge! 🚀',
+            message: `Hello ${username}, we're excited to have you here! Start by creating your first project node or exploring your dashboard.`,
+            type: 'info',
+            link: '/'
+        });
 
-        try {
-            await sendEmail({
-                to: user.email,
-                subject: 'Welcome to SaaSForge - Verify Your Email',
-                html: `
-                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
-                        <div style="background-color: #4f46e5; padding: 32px; text-align: center;">
-                            <h1 style="color: white; margin: 0; font-size: 24px;">Welcome to SaaSForge! 🚀</h1>
-                        </div>
-                        <div style="padding: 32px;">
-                            <p style="font-size: 16px; color: #334155; line-height: 1.6;">Hi ${user.username},</p>
-                            <p style="font-size: 16px; color: #334155; line-height: 1.6;">We're thrilled to have you on board! You're just one click away from starting your journey. Please verify your email address by clicking the button below:</p>
-                            <div style="text-align: center; margin: 32px 0;">
-                                <a href="${verifyUrl}" style="background-color: #4f46e5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Verify My Account</a>
-                            </div>
-                            <p style="font-size: 14px; color: #64748b; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
-                                Or copy and paste this link into your browser:<br>
-                                <a href="${verifyUrl}" style="color: #4f46e5; word-break: break-all;">${verifyUrl}</a>
-                            </p>
-                        </div>
-                    </div>
-                `
-            });
-        } catch (err) {
-            // Email failed but user was created — don't crash registration
-            console.error('Email send failed:', err.message);
-            // Use updateOne to avoid triggering pre-save hook
-            await User.updateOne({ _id: user._id }, { $unset: { verificationToken: 1 } });
-        }
+
+        // Generate tokens automatically
+        const accessToken = generateAccessToken(user);
+        const newRefreshToken = generateRefreshToken(user);
+
+        // Update user with refresh token
+        await User.findByIdAndUpdate(user._id, {
+            $push: { refreshTokens: newRefreshToken }
+        });
+
+        // Set httpOnly cookie
+        res.cookie('jwt', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: process.env.NODE_ENV === 'production' ? 'None' : 'Lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        });
 
         res.status(201).json({
-            message: 'Registration successful. Please check your email to verify your account.'
+            message: 'Registration successful. You can optionally verify your email later.',
+            accessToken,
+            user: {
+                _id: user._id,
+                username: user.username,
+                email: user.email,
+                role: user.role,
+                avatarUrl: user.avatarUrl
+            }
         });
     } catch (error) {
         console.error('Registration error:', error.message);
@@ -120,7 +123,8 @@ const loginUser = async (req, res) => {
                 _id: user._id,
                 username: user.username,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                avatarUrl: user.avatarUrl
             }
         });
     } catch (error) {
@@ -197,7 +201,8 @@ const refreshAccessToken = async (req, res) => {
                 _id: user._id,
                 username: user.username,
                 email: user.email,
-                role: user.role
+                role: user.role,
+                avatarUrl: user.avatarUrl
             }
         });
     } catch (error) {
@@ -276,6 +281,7 @@ const forgotPassword = async (req, res) => {
             await sendEmail({
                 to: user.email,
                 subject: 'SaaSForge - Password Reset Request',
+                text: `You requested a password reset for your SaaSForge account. Please use this link to reset it: ${resetUrl}. This link will expire in 10 minutes.`,
                 html: `
                     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
                         <div style="background-color: #0f172a; padding: 32px; text-align: center; border-bottom: 4px solid #4f46e5;">
@@ -339,6 +345,65 @@ const resetPassword = async (req, res) => {
     }
 };
 
+// @desc    Send verification email
+// @route   POST /api/auth/send-verification-email
+// @access  Private
+const sendVerificationEmail = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (user.isVerified) {
+            return res.status(400).json({ message: 'Email is already verified' });
+        }
+
+        // Generate a new token if one doesn't exist
+        if (!user.verificationToken) {
+            user.verificationToken = crypto.randomBytes(20).toString('hex');
+            // We use markModified because pre-save hook might block it if we just save without changing password
+            user.markModified('verificationToken');
+            await user.save({ validateBeforeSave: false });
+        }
+
+        const verifyUrl = `${process.env.FRONTEND_URL}/verify-email/${user.verificationToken}`;
+
+        try {
+            await sendEmail({
+                to: user.email,
+                subject: 'SaaSForge - Verify Your Email',
+                text: `Hi ${user.username}, please verify your email address by clicking this link: ${verifyUrl}`,
+                html: `
+                    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background-color: #ffffff;">
+                        <div style="background-color: #4f46e5; padding: 32px; text-align: center;">
+                            <h1 style="color: white; margin: 0; font-size: 24px;">Verify Your Email 🚀</h1>
+                        </div>
+                        <div style="padding: 32px;">
+                            <p style="font-size: 16px; color: #334155; line-height: 1.6;">Hi ${user.username},</p>
+                            <p style="font-size: 16px; color: #334155; line-height: 1.6;">Please verify your email address by clicking the button below:</p>
+                            <div style="text-align: center; margin: 32px 0;">
+                                <a href="${verifyUrl}" style="background-color: #4f46e5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Verify My Account</a>
+                            </div>
+                            <p style="font-size: 14px; color: #64748b; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                                Or copy and paste this link into your browser:<br>
+                                <a href="${verifyUrl}" style="color: #4f46e5; word-break: break-all;">${verifyUrl}</a>
+                            </p>
+                        </div>
+                    </div>
+                `
+            });
+            res.status(200).json({ message: 'Verification email sent' });
+        } catch (err) {
+            console.error('Email send failed:', err.message);
+            res.status(500).json({ message: 'Email could not be sent' });
+        }
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
 module.exports = {
     registerUser,
     loginUser,
@@ -346,5 +411,6 @@ module.exports = {
     logoutUser,
     verifyEmail,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    sendVerificationEmail
 };

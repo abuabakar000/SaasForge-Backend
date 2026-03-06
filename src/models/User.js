@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema({
         enum: ['user', 'admin'],
         default: 'user'
     },
+    stripeCustomerId: String,
     refreshTokens: [String],
     isVerified: {
         type: Boolean,
@@ -36,7 +37,8 @@ const userSchema = new mongoose.Schema({
     },
     verificationToken: String,
     resetPasswordToken: String,
-    resetPasswordExpire: Date
+    resetPasswordExpire: Date,
+    avatarUrl: String
 }, {
     timestamps: true
 });

@@ -18,6 +18,10 @@ const sendResendEmail = async (options) => {
             to: options.to,
             subject: options.subject,
             html: options.html,
+            text: options.text || options.html.replace(/<[^>]*>?/gm, ''), // Simple html to text fallback
+            headers: {
+                'X-Entity-Ref-ID': Date.now().toString(),
+            },
         });
 
         if (error) {

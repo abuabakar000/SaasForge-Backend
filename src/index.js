@@ -58,6 +58,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/stripe', require('./routes/stripeRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/projects', require('./routes/projectRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 // Serve static uploaded files
 const path = require('path');
